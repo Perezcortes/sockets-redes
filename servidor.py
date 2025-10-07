@@ -7,6 +7,8 @@ PORT = 5000         # Puerto donde el servidor escuchará
 BUFFER_SIZE = 4096  # Tamaño del búfer para enviar datos en bloques
 CARPETA_ARCHIVOS = "./"  # Carpeta donde están los archivos a compartir
 
+# Carpeta donde están los archivos a compartir, por defecto por si no funciona el de arriba
+CARPETA_ARCHIVOS = os.path.dirname(os.path.abspath(__file__)) or "."
 
 def iniciar_servidor():
     """Inicializa y ejecuta el servidor de sockets TCP."""
