@@ -1,146 +1,104 @@
 import socket
 import os
 
-# --- Configuración del Cliente ---
-HOST = '127.0.0.1'  # Dirección del servidor
-PORT = 5000         # Puerto del servidor
-BUFFER_SIZE = 4096  # Tamaño del búfer para recibir datos
+#La indicaccion del host y puerto se hace desde la interfaz
+BUFFER_SIZE = 4096
 
-def iniciar_cliente():
-    """Inicializa y ejecuta el cliente de sockets TCP."""
-    
-    print("=" * 60)
-    print("--- CLIENTE TCP DE TRANSFERENCIA DE ARCHIVOS ---")
-    print("=" * 60)
-    
-    # Solicitar al usuario el nombre del archivo
-    print("\nArchivos disponibles para solicitar:")
-    print("  - archivo_servidor.txt (texto)")
-    print("  - documento.pdf (PDF)")
-    print("  - imagen.jpg (imagen)")
-    print("  - video.mp4 (video)")
-    print("  - documento.docx (Word)")
-    
-    nombre_archivo = input("\nIngresa el nombre del archivo que deseas solicitar: ").strip()
-    
-    if not nombre_archivo:
-        print("[!] ERROR: Debes ingresar un nombre de archivo.")
-        return
-    
-    # Definir el nombre del archivo recibido (mantiene la extensión original)
-    nombre_base, extension = os.path.splitext(nombre_archivo)
-    archivo_recibido = f"{nombre_base}_recibido{extension}"
-    
-    print(f"\n[*] Intentando conectar con el servidor en {HOST}:{PORT}...")
-    
-    try:
-        # 1. CREACIÓN DEL SOCKET
-        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        print(f"[+] Socket de cliente creado correctamente.")
+class LogicaCliente:
 
-        # 2. SOLICITUD DE CONEXIÓN (CONNECT)
-        client_socket.connect((HOST, PORT))
-        print(f"[+] CONEXIÓN ESTABLECIDA con el servidor.")
-        print("=" * 60)
+    #Lo mismo de iniciar cliente
+    def __init__(self):
+        """ Inicializa las variables."""
+        self.client_socket = None
 
-        # 3. ENVÍO DE LA SOLICITUD DE ARCHIVO
-        print(f"\n[*] Solicitando archivo: '{nombre_archivo}'")
-        client_socket.sendall(nombre_archivo.encode('utf-8'))
-        print(f"[+] Solicitud enviada al servidor.")
+    def conectar(self, host, port):
+        """
+        Intentar establecer una conexión con el servidor.
+        """
+        try:
+            self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.client_socket.connect((host, port))
+        except Exception as e:
+            self.client_socket = None
+            raise ConnectionError(f"No se pudo conectar a {host}:{port}. Detalles: {e}")
 
-        # 4. RECEPCIÓN DE LA RESPUESTA INICIAL (Estado y Tamaño)
-        print(f"[*] Esperando respuesta del servidor...")
-        response = client_socket.recv(BUFFER_SIZE).decode('utf-8')
+    def desconectar(self):
+        """Cerrar la conexion."""
+        if self.client_socket:
+            try:
+                self.client_socket.close()
+            except Exception as e:
+                print(f"Error al cerrar el socket: {e}")
+            finally:
+                self.client_socket = None
+
+    def listar_archivos(self, file_type):
+        """
+        Pedir archivos de un tipo segun lo seleccionado en la interfaz.
+        """
+        if not self.client_socket:
+            raise ConnectionError("No estás conectado a ningún servidor.")
         
-        # Analizar la respuesta
-        if response.startswith("FILE_EXISTS|"):
-            _, file_size_str = response.split("|")
-            file_size = int(file_size_str)
+        try:
+            # Enviar comando para listar archivos 
+            request = f"LIST|{file_type}"
+            self.client_socket.sendall(request.encode('utf-8'))
             
-            print(f"[+] Archivo ENCONTRADO en el servidor.")
-            print(f"    - Tamaño: {file_size} bytes ({file_size/1024:.2f} KB)")
-            print("=" * 60)
-            print(f"\n[*] Iniciando RECEPCIÓN del archivo...")
+            # Recibir la lista de archivos
+            response = self.client_socket.recv(BUFFER_SIZE).decode('utf-8')
+            
+            if response:
+                return response.split(',') # Devuelve una lista de nombres de archivo
+            return [] # Devuelve una lista vacía si no hay archivos
+            
+        except Exception as e:
+            raise IOError(f"Error al obtener la lista de archivos: {e}")
 
-            # 5. RECEPCIÓN Y ESCRITURA DEL ARCHIVO (modo binario para cualquier tipo)
-            received_bytes = 0
+
+    def solicitar_archivo(self, nombre_archivo, ruta_guardado, progress_callback, status_callback):
+
+        if not self.client_socket:
+            raise ConnectionError("No estás conectado a ningún servidor.")
+
+        try:
+            # 1. Enviar solicitud de archivo 
+            request = f"GET|{nombre_archivo}"
+            self.client_socket.sendall(request.encode('utf-8'))
             
-            with open(archivo_recibido, 'wb') as f:
-                while received_bytes < file_size:
-                    # Calcular cuántos bytes faltan
-                    remaining = file_size - received_bytes
-                    # Recibir hasta BUFFER_SIZE bytes, pero no más de los que faltan
-                    to_receive = min(BUFFER_SIZE, remaining)
-                    
-                    chunk = client_socket.recv(to_receive)
-                    if not chunk:
-                        print(f"\n[!] ERROR: Conexión cerrada inesperadamente.")
-                        print(f"    Datos recibidos: {received_bytes}/{file_size} bytes")
-                        break
+            # 2. Recibir respuesta del servidor (estado y tamaño)
+            response = self.client_socket.recv(BUFFER_SIZE).decode('utf-8')
+            
+            if response.startswith("FILE_EXISTS|"):
+                _, file_size_str = response.split("|")
+                file_size = int(file_size_str)
+                
+                status_callback(f"Descargando... Tamaño: {file_size/1024:.2f} KB",False)
+
+                # 3. Recibir y guardar el archivo en disco
+                received_bytes = 0
+                with open(ruta_guardado, 'wb') as f:
+                    while received_bytes < file_size:
+                        remaining = file_size - received_bytes
+                        to_receive = min(BUFFER_SIZE, remaining)
+                        chunk = self.client_socket.recv(to_receive)
+                        if not chunk:
+                            raise Exception("La conexión se cerró inesperadamente.")
+                        f.write(chunk)
+                        received_bytes += len(chunk)
                         
-                    f.write(chunk)
-                    received_bytes += len(chunk)
-                    
-                    # Mostrar progreso
-                    progress = (received_bytes / file_size) * 100
-                    print(f"    Progreso: {received_bytes}/{file_size} bytes ({progress:.1f}%)", end='\r')
+                        progress = (received_bytes / file_size) * 100
+                        progress_callback(progress)
 
-            print()  # Nueva línea después del progreso
+                if received_bytes != file_size:
+                    raise Exception("Transferencia incompleta.")
+
+            elif response == "FILE_NOT_FOUND":
+                raise FileNotFoundError(f"El archivo '{nombre_archivo}' no fue encontrado en el servidor.")
             
-            if received_bytes == file_size:
-                print("=" * 60)
-                print(f"[+] TRANSFERENCIA EXITOSA")
-                print(f"[+] Archivo guardado como: '{archivo_recibido}'")
-                print(f"    - Tamaño final: {received_bytes} bytes ({received_bytes/1024:.2f} KB)")
-                print("=" * 60)
             else:
-                print("=" * 60)
-                print(f"[!] TRANSFERENCIA INCOMPLETA")
-                print(f"    - Esperado: {file_size} bytes")
-                print(f"    - Recibido: {received_bytes} bytes")
-                print("=" * 60)
-            
-        elif response == "FILE_NOT_FOUND":
-            # 5. NOTIFICACIÓN DE FALLA (Archivo no encontrado)
-            print("=" * 60)
-            print(f"[!] FALLA: Archivo NO ENCONTRADO")
-            print(f"    El servidor no tiene el archivo '{nombre_archivo}'")
-            print("=" * 60)
-        
-        else:
-            print("=" * 60)
-            print(f"[!] FALLA: Respuesta desconocida del servidor")
-            print(f"    Respuesta recibida: {response}")
-            print("=" * 60)
+                raise Exception(f"Respuesta desconocida del servidor: {response}")
 
-    except ConnectionRefusedError:
-        # 5. NOTIFICACIÓN DE FALLA (No conexión)
-        print("=" * 60)
-        print("[!] FALLA: No se pudo establecer la conexión con el servidor")
-        print("    Posibles causas:")
-        print("    - El servidor no está ejecutándose")
-        print("    - El servidor no está escuchando en el puerto especificado")
-        print("    - Firewall bloqueando la conexión")
-        print("=" * 60)
-        
-    except socket.gaierror:
-        print("=" * 60)
-        print("[!] FALLA: Error de dirección")
-        print("    Verifica la dirección IP y el puerto del servidor")
-        print("=" * 60)
-        
-    except Exception as e:
-        print("=" * 60)
-        print(f"[!] ERROR inesperado: {e}")
-        print("=" * 60)
-        
-    finally:
-        # 6. CIERRE DE LA SESIÓN
-        if 'client_socket' in locals():
-            client_socket.close()
-            print(f"\n[+] CIERRE DE SESIÓN completado.")
-            print(f"[+] Socket del cliente cerrado correctamente.")
-            print("=" * 60)
-            
-if __name__ == "__main__":
-    iniciar_cliente()
+        except Exception as e:
+            status_callback(f"Error: {e}", True)
+            raise e
+
