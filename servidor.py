@@ -7,6 +7,9 @@ PORT = 5000         # Puerto donde el servidor escuchará
 BUFFER_SIZE = 4096  # Tamaño del búfer para enviar datos en bloques
 CARPETA_ARCHIVOS = "./"  # Carpeta donde están los archivos a compartir
 
+# Carpeta donde están los archivos a compartir, por defecto por si no funciona el de arriba
+CARPETA_ARCHIVOS = os.path.dirname(os.path.abspath(__file__)) or "."
+
 def iniciar_servidor():
     """Inicializa y ejecuta el servidor de sockets TCP."""
     
@@ -41,54 +44,91 @@ def iniciar_servidor():
             print(f"\n[+] NUEVA CONEXIÓN establecida desde {client_address[0]}:{client_address[1]}")
             
             try:
+
+                while True: #para no dejar de atender al cliente
                 # 5. RECEPCIÓN DE LA SOLICITUD DEL CLIENTE
-                nombre_archivo = client_socket.recv(BUFFER_SIZE).decode('utf-8').strip()
-                print(f"[*] Cliente solicita el archivo: '{nombre_archivo}'")
+                    respuesta = client_socket.recv(BUFFER_SIZE).decode('utf-8').strip()
+                    if not respuesta:
+                        print(f"[*] El cliente {client_address} cerró la conexión.")
+                        break
+                #comprobar la solicitud de un comando
+                    if '|' in respuesta:
+                        comando, nombre_archivo = respuesta.split('|', 1)
+
+                        if comando == 'LIST':
+                            tipo = nombre_archivo
+                            print(f"[*] El cliente solicita la lista de archivos de tipo: '{tipo}'")
+
+                            extensiones = {
+                                'PDF': ['.pdf'],
+                                'IMAGEN': ['.jpg', '.jpeg', '.png', '.gif'],
+                                'VIDEO': ['.mp4', '.mov', '.avi'],
+                                'OTRO': ['.txt', '.docx', '.zip']
+                            }
+
+                            encontrados = []
+                            if tipo in extensiones:
+                                permitidas = extensiones[tipo]
+                                for archivo in os.listdir(CARPETA_ARCHIVOS):
+                                    if any (archivo.lower().endswith(ext) for ext in permitidas):
+                                        encontrados.append(archivo)
+                            response=",".join(encontrados) 
+                            client_socket.sendall(response.encode('utf-8'))
+                            print(f"[+] Lista de archivos enviada: {response if response else 'Ninguno'}")
+
+                    #AHORA PARA EL GET
+                        elif comando == 'GET':
+                            nombre_archivo = nombre_archivo
+                            print(f"[*] Cliente solicita el archivo: '{nombre_archivo}'")
+                            ruta_archivo = os.path.join(CARPETA_ARCHIVOS, nombre_archivo)
+                    
+                #nombre_archivo = client_socket.recv(BUFFER_SIZE).decode('utf-8').strip()
+                #print(f"[*] Cliente solicita el archivo: '{nombre_archivo}'")
                 
                 # Construye la ruta completa del archivo
-                ruta_archivo = os.path.join(CARPETA_ARCHIVOS, nombre_archivo)
+                #ruta_archivo = os.path.join(CARPETA_ARCHIVOS, nombre_archivo)
                 
                 # 6. VERIFICACIÓN Y ENVÍO DEL ARCHIVO
-                if os.path.exists(ruta_archivo) and os.path.isfile(ruta_archivo):
-                    # El archivo existe
-                    file_size = os.path.getsize(ruta_archivo)
-                    file_ext = os.path.splitext(nombre_archivo)[1].lower()
-                    
-                    print(f"[+] Archivo ENCONTRADO")
-                    print(f"    - Tamaño: {file_size} bytes ({file_size/1024:.2f} KB)")
-                    print(f"    - Tipo: {file_ext if file_ext else 'sin extensión'}")
-                    
-                    # Envía confirmación con el tamaño del archivo
-                    response = f"FILE_EXISTS|{file_size}"
-                    client_socket.sendall(response.encode('utf-8'))
-                    print(f"[*] Notificación enviada al cliente: Archivo disponible")
-                    
-                    # Pequeña pausa para asegurar que el mensaje se procese
-                    import time
-                    time.sleep(0.1)
-                    
-                    # Lee y envía el archivo en bloques (modo binario para soportar cualquier tipo)
-                    print(f"[*] Iniciando transferencia del archivo...")
-                    sent_bytes = 0
-                    with open(ruta_archivo, 'rb') as f:
-                        while True:
-                            chunk = f.read(BUFFER_SIZE)
-                            if not chunk:
-                                break
-                            client_socket.sendall(chunk)
-                            sent_bytes += len(chunk)
-                            # Mostrar progreso
-                            progress = (sent_bytes / file_size) * 100
-                            print(f"    Progreso: {sent_bytes}/{file_size} bytes ({progress:.1f}%)", end='\r')
-                    
-                    print(f"\n[+] TRANSFERENCIA COMPLETADA: {sent_bytes} bytes enviados")
-                    
-                else:
-                    # El archivo NO existe
-                    print(f"[!] Archivo NO ENCONTRADO: '{nombre_archivo}'")
-                    client_socket.sendall("FILE_NOT_FOUND".encode('utf-8'))
-                    print(f"[*] Notificación enviada al cliente: Archivo no disponible")
-                    
+                            if os.path.exists(ruta_archivo) and os.path.isfile(ruta_archivo):
+                                # El archivo existe
+                                file_size = os.path.getsize(ruta_archivo)
+                                file_ext = os.path.splitext(nombre_archivo)[1].lower()
+                                
+                                print(f"[+] Archivo ENCONTRADO")
+                                print(f"    - Tamaño: {file_size} bytes ({file_size/1024:.2f} KB)")
+                                print(f"    - Tipo: {file_ext if file_ext else 'sin extensión'}")
+                                
+                                # Envía confirmación con el tamaño del archivo
+                                response = f"FILE_EXISTS|{file_size}"
+                                client_socket.sendall(response.encode('utf-8'))
+                                print(f"[*] Notificación enviada al cliente: Archivo disponible")
+                                
+                                # Pequeña pausa para asegurar que el mensaje se procese
+                                import time
+                                time.sleep(0.1)
+                                
+                                # Lee y envía el archivo en bloques (modo binario para soportar cualquier tipo)
+                                print(f"[*] Iniciando transferencia del archivo...")
+                                sent_bytes = 0
+                                with open(ruta_archivo, 'rb') as f:
+                                    while True:
+                                        chunk = f.read(BUFFER_SIZE)
+                                        if not chunk:
+                                            break
+                                        client_socket.sendall(chunk)
+                                        sent_bytes += len(chunk)
+                                        # Mostrar progreso
+                                        progress = (sent_bytes / file_size) * 100
+                                        print(f"    Progreso: {sent_bytes}/{file_size} bytes ({progress:.1f}%)", end='\r')
+                                
+                                print(f"\n[+] TRANSFERENCIA COMPLETADA: {sent_bytes} bytes enviados")
+                                
+                            else:
+                                # El archivo NO existe
+                                print(f"[!] Archivo NO ENCONTRADO: '{nombre_archivo}'")
+                                client_socket.sendall("FILE_NOT_FOUND".encode('utf-8'))
+                                print(f"[*] Notificación enviada al cliente: Archivo no disponible")
+                                
             except Exception as e:
                 print(f"[!] ERROR al procesar la solicitud del cliente: {e}")
                 
